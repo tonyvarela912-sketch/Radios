@@ -193,7 +193,8 @@ const store = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
-let favs = store.get('favs', []);
+let favs = store.get('favs', []).map(f => (f.stationuuid || '').startsWith('nova:') ? Object.assign({}, f, {country: 'France', tags: ''}) : f);
+store.set('favs', favs);
 
 // ================= Annuaire Radio Browser =================
 const MIRRORS = ['https://de1.api.radio-browser.info','https://fi1.api.radio-browser.info','https://de2.api.radio-browser.info','https://at1.api.radio-browser.info'];
@@ -255,7 +256,7 @@ async function loadNova(){
     const d = await novaData();
     const list = d.filter(i => i.radio && i.radio.stream_url).map(i => ({
       stationuuid: 'nova:' + i.radio.code, name: i.radio.name, url_resolved: i.radio.stream_url,
-      country: i.currentTrack ? cap(i.currentTrack.artist) + ' – ' + cap(i.currentTrack.title) : 'France',
+      country: 'France', live: i.currentTrack ? cap(i.currentTrack.artist) + ' – ' + cap(i.currentTrack.title) : '',
       tags: '', favicon: i.radio.thumbnail || i.radio.image || '', homepage: 'https://www.nova.fr'}));
     if (list.length){ if (view === 'nova') render(list, 'Les radios Nova · en ce moment'); return; }
   }catch(e){}
@@ -267,6 +268,29 @@ async function loadNova(){
   const seen = new Set(found.map(s => (s.url_resolved||'').split('?')[0]));
   const all = [...found, ...NOVA_FALLBACK.filter(s => !seen.has(s.url_resolved))].sort((a,b) => a.name.localeCompare(b.name));
   if (view === 'nova') render(all);
+}
+
+// ================= Radios officielles françaises (france.json) =================
+let FR_LIST = [];
+window.setFrance = list => {
+  FR_LIST = (Array.isArray(list) ? list : []).map(s => ({stationuuid: 'fr:' + s.url, name: s.name, url_resolved: s.url,
+    country: 'France', tags: s.tags || '', favicon: s.favicon || '', group: s.group || ''}));
+};
+if (!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.native)) {
+  fetch('france.json', {cache: 'no-cache'}).then(r => r.json()).then(setFrance).catch(() => {});
+}
+const normTxt = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/&/g, ' et ').replace(/\s+/g, ' ').trim();
+function frMatches(q, tag, cc){
+  if (cc && cc !== 'FR') return [];
+  if (!q && !tag) return cc === 'FR' ? FR_LIST : [];
+  const nq = normTxt(q), nt = normTxt(tag);
+  return FR_LIST.filter(s => (!nq || normTxt(s.name + ' ' + s.group).includes(nq)) && (!nt || normTxt(s.tags + ' ' + s.name).includes(nt)));
+}
+function frKey(u){ try{ const x = new URL(u); return x.hostname + x.pathname; }catch(e){ return u || ''; } }
+function mergeFr(r, q, tag, cc){
+  const m = frMatches(q, tag, cc);
+  const seen = new Set(m.map(s => frKey(s.url_resolved)));
+  return m.concat((r || []).filter(s => !seen.has(frKey(s.url_resolved || s.url))));
 }
 
 // ================= Explorer =================
@@ -287,8 +311,8 @@ async function search(){
   const token = ++searchToken; spin();
   const p = new URLSearchParams({hidebroken:'true', order:'clickcount', reverse:'true', limit:'150'});
   if (q) p.set('name', q); if (tag) p.set('tag', tag); if (cc) p.set('countrycode', cc);
-  try{ const r = await api('/json/stations/search?' + p); if (token === searchToken && view === 'search') render(r); }
-  catch(e){ if (token === searchToken) info('Annuaire injoignable. Vérifie ta connexion.'); }
+  try{ const r = await api('/json/stations/search?' + p); if (token === searchToken && view === 'search') render(mergeFr(r, q, tag, cc)); }
+  catch(e){ if (token !== searchToken) return; const m = frMatches(q, tag, cc); m.length ? render(m) : info('Annuaire injoignable. Vérifie ta connexion.'); }
 }
 async function topStations(){
   const token = ++searchToken; spin();
@@ -339,7 +363,7 @@ function render(stations, label){
     const row = document.createElement('div');
     row.className = 'row' + (current && current.stationuuid === s.stationuuid ? ' playing' : '');
     row.dataset.id = s.stationuuid;
-    const sub = [s.country, (s.tags||'').split(',').filter(Boolean).slice(0,2).join(', '), s.bitrate ? s.bitrate + ' kbps' : ''].filter(Boolean).join(' · ');
+    const sub = [s.live || s.country, (s.tags||'').split(',').filter(Boolean).slice(0,2).join(', '), s.bitrate ? s.bitrate + ' kbps' : ''].filter(Boolean).join(' · ');
     row.innerHTML = `<div class="logo">${esc((s.name||'?').trim()[0])}</div>
       <div class="meta"><div class="name">${esc(s.name)}${s.unverified ? '<span class="badge">non vérifié</span>' : ''}</div><div class="sub">${esc(sub)}</div></div>
       <div class="eq"><span></span><span></span><span></span></div>
@@ -373,7 +397,7 @@ function toggleFav(s){
   toast(was ? 'Retirée des favoris' : '★ Ajoutée aux favoris');
   syncFavNow();
 }
-const showFavs = () => favs.length ? render(favs, 'Mes favoris') : info('Pas encore de favoris.<br>Clique sur ★ à côté d’une radio.');
+const showFavs = () => favs.length ? render(favs.map(f => Object.assign({}, f, {country: '', tags: '', bitrate: 0, live: ''})), 'Mes favoris') : info('Pas encore de favoris.<br>Clique sur ★ à côté d’une radio.');
 
 // ================= Lecteur =================
 const audio = document.getElementById('audio');
