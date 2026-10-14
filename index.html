@@ -355,7 +355,6 @@ const spin = () => list.innerHTML = '<div class="spinner"></div>';
 const STAR = '<svg viewBox="0 0 24 24"><path d="M12 17.3 18.2 21l-1.6-7L22 9.2l-7.2-.6L12 2 9.2 8.6 2 9.2 7.4 14l-1.6 7z"/></svg>';
 
 function render(stations, label){
-  if (location.protocol === 'https:') stations = stations.filter(s => !/^http:/i.test(s.url_resolved || s.url || ''));
   if (!stations.length){ info('Aucune radio trouvée.'); return; }
   list.innerHTML = `<div class="count">${label || stations.length + ' radio' + (stations.length > 1 ? 's' : '')}</div>`;
   const frag = document.createDocumentFragment();
@@ -419,9 +418,10 @@ function setLive(state){
 const STAR_FULL='M12 17.3 18.2 21l-1.6-7L22 9.2l-7.2-.6L12 2 9.2 8.6 2 9.2 7.4 14l-1.6 7z', STAR_EMPTY='M22 9.2l-7.2-.6L12 2 9.2 8.6 2 9.2 7.4 14l-1.6 7L12 17.3 18.2 21l-1.6-7L22 9.2zM12 15.4l-3.8 2.3 1-4.3-3.3-2.9 4.4-.4L12 6.1l1.7 4 4.4.4-3.3 2.9 1 4.3L12 15.4z';
 function syncFavNow(){ const on = isFav(current); favNow.classList.toggle('on', on); favNow.querySelector('path').setAttribute('d', on ? STAR_FULL : STAR_EMPTY); favNow.title = on ? 'Retirer des favoris' : 'Ajouter aux favoris'; }
 
+const streamSrc = s => { const u = s.url_resolved || s.url || ''; return (location.protocol === 'https:' && /^http:/i.test(u)) ? u.replace(/^http:/i, 'https:') : u; };
 function play(s){
   current = s;
-  audio.src = s.url_resolved || s.url;
+  audio.src = streamSrc(s);
   audio.play().catch(() => {});
   setLive('load');
   nowName.textContent = s.name;
@@ -460,13 +460,13 @@ async function fetchTitle(){
 
 function togglePlay(){
   if (!current){ randomStation(); return; }
-  if (audio.paused){ audio.src = current.url_resolved || current.url; audio.play().catch(()=>{}); setLive('load'); }
+  if (audio.paused){ audio.src = streamSrc(current); audio.play().catch(()=>{}); setLive('load'); }
   else audio.pause();
 }
 audio.addEventListener('playing', () => setLive('live'));
 audio.addEventListener('waiting', () => setLive('load'));
 audio.addEventListener('pause', () => { if (!liveTag.dataset.err) setLive('off'); });
-audio.addEventListener('error', () => { if (current && audio.src){ setLive('err'); nowTitle.textContent = 'Flux hors service — essaie une autre radio'; } });
+audio.addEventListener('error', () => { if (current && audio.src){ setLive('err'); nowTitle.textContent = (location.protocol === 'https:' && /^http:/i.test(current.url_resolved || current.url || '')) ? 'Radio non disponible sur iPhone (flux non sécurisé)' : 'Flux hors service — essaie une autre radio'; } });
 if ('mediaSession' in navigator){
   navigator.mediaSession.setActionHandler('play', togglePlay);
   navigator.mediaSession.setActionHandler('pause', togglePlay);
